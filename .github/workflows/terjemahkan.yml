@@ -1,0 +1,118 @@
+# Nama Workflow
+name: Terjemahkan Gambar Manuskrip
+
+# Pemicu: Jalankan workflow ini saat ada file .png baru di folder 'manuskrip/'
+on:
+  push:
+    paths:
+      - 'manuskrip/**.png'
+
+jobs:
+  ocr-and-translate:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Langkah 1: Checkout kode dari repository
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Langkah 2: Instalasi dependencies yang dibutuhkan
+      - name: Install Dependencies (ImageMagick & Tesseract)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
+          # tesseract-ocr-ara untuk Bahasa Arab
+          # tesseract-ocr-eng untuk teks Latin (seperti di daftar isi)
+          # Tambahkan paket bahasa lain jika perlu (misal: tesseract-ocr-nld untuk Belanda)
+
+      # Langkah 3: Temukan file gambar yang baru di-push
+      # Untuk kesederhanaan, contoh ini mengasumsikan hanya ada satu file .png di commit
+      - name: Find New Image File
+        id: find_image
+        run: |
+          # Cari file .png di commit terakhir
+          IMAGE_FILE=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }} | grep '\.png$')
+          echo "image_path=$IMAGE_FILE" >> $GITHUB_OUTPUT
+
+      # Langkah 4: Potong gambar menjadi halaman kiri dan kanan
+      - name: Split Image into Left and Right Pages
+        run: |
+          # Potong gambar secara vertikal 50%
+          # Halaman Kiri (lebar 50% dari kiri)
+          convert "${{ steps.find_image.outputs.image_path }}" -crop 50x100%+0+0 halaman_kiri.png
+          # Halaman Kanan (lebar 50% dari kanan)
+          convert "${{ steps.find_image.outputs.image_path }}" -crop 50x100%+50%x0 +repage halaman_kanan.png
+          echo "Gambar berhasil dipotong."
+
+      # Langkah 5: Jalankan OCR pada kedua halaman
+      - name: Run OCR on Left Page
+        run: tesseract halaman_kiri.png hasil_ocr_kiri -l ara+eng
+        # Opsi '-l ara+eng' mencoba mendeteksi bahasa Arab dan Inggris
+
+      - name: Run OCR on Right Page
+        run: tesseract halaman_kanan.png hasil_ocr_kanan -l ara+eng
+
+      # Langkah 6: Terjemahkan teks menggunakan API (Contoh dengan Google Translate API)
+      - name: Translate Left Page Text
+        id: translate_left
+        run: |
+          # Baca teks dari file hasil OCR
+          TEXT_TO_TRANSLATE=$(cat hasil_ocr_kiri.txt)
+          # Panggil API menggunakan curl
+          TRANSLATED_TEXT=$(curl -s -X POST "https://translation.googleapis.com/language/translate/v2?key=${{ secrets.TRANSLATE_API_KEY }}" \
+            -d "q=${TEXT_TO_TRANSLATE}" \
+            -d "target=id" \
+            -H "Content-Type: application/x-www-form-urlencoded")
+          # Ekstrak teks terjemahan dari respons JSON
+          EXTRACTED_TEXT=$(echo "$TRANSLATED_TEXT" | jq -r '.data.translations[0].translatedText')
+          # Simpan hasil terjemahan ke file
+          echo "$EXTRACTED_TEXT" > hasil_terjemahan_kiri.txt
+          echo "Terjemahan halaman kiri selesai."
+
+      - name: Translate Right Page Text
+        id: translate_right
+        run: |
+          TEXT_TO_TRANSLATE=$(cat hasil_ocr_kanan.txt)
+          TRANSLATED_TEXT=$(curl -s -X POST "https://translation.googleapis.com/language/translate/v2?key=${{ secrets.TRANSLATE_API_KEY }}" \
+            -d "q=${TEXT_TO_TRANSLATE}" \
+            -d "target=id" \
+            -H "Content-Type: application/x-www-form-urlencoded")
+          EXTRACTED_TEXT=$(echo "$TRANSLATED_TEXT" | jq -r '.data.translations[0].translatedText')
+          echo "$EXTRACTED_TEXT" > hasil_terjemahan_kanan.txt
+          echo "Terjemahan halaman kanan selesai."
+      
+      # Langkah 7: Gabungkan hasil dan commit kembali ke repository
+      - name: Combine and Commit Results
+        run: |
+          # Buat nama file hasil berdasarkan nama file asli
+          ORIGINAL_FILENAME="${{ steps.find_image.outputs.image_path }}"
+          FILENAME_NO_EXT=$(basename "$ORIGINAL_FILENAME" .png)
+          OUTPUT_FILE="terjemahan/${FILENAME_NO_EXT}_terjemahan.md"
+
+          # Buat direktori jika belum ada
+          mkdir -p terjemahan
+
+          # Gabungkan hasil ke satu file Markdown
+          {
+            echo "# Hasil Terjemahan untuk: ${ORIGINAL_FILENAME}"
+            echo ""
+            echo "---"
+            echo "## Terjemahan Halaman Kiri"
+            echo ""
+            cat hasil_terjemahan_kiri.txt
+            echo ""
+            echo "---"
+            echo "## Terjemahan Halaman Kanan"
+            echo ""
+            cat hasil_terjemahan_kanan.txt
+          } > "$OUTPUT_FILE"
+
+      # Gunakan action siap pakai untuk melakukan commit
+      - name: Auto Commit Translated File
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Bot: Menambahkan hasil terjemahan untuk file yang baru"
+          file_pattern: "terjemahan/*.md"
+          commit_user_name: "GitHub Actions Bot"
+          commit_user_email: "actions@github.com"
+          commit_author: "GitHub Actions Bot <actions@github.com>"
