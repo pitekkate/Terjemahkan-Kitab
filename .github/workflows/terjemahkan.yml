@@ -1,7 +1,7 @@
 # Nama Workflow
 name: Terjemahkan Gambar Manuskrip
 
-# Pemicu: 
+# Pemicu:
 # 1. Jalankan otomatis saat ada file .png baru di folder 'manuskrip/' di branch `alfatawi`
 # 2. Jalankan manual via GitHub UI/API
 on:
@@ -52,41 +52,26 @@ jobs:
           echo "🔍 Memeriksa file yang diubah di commit ini:"
           git diff-tree --no-commit-id --name-only -r ${{ github.sha }}
 
-      # Langkah 5: Potong gambar menjadi halaman kiri dan kanan
-      - name: Split Image into Left and Right Pages
+      # Langkah 5: OCR dengan Tesseract (gambar utuh)
+      - name: Run OCR on Full Image
         run: |
-          convert "${{ steps.find_image.outputs.image_path }}" -crop 50x100%+0+0 halaman_kiri.png
-          convert "${{ steps.find_image.outputs.image_path }}" -crop 50x100%+50%x0 +repage halaman_kanan.png
+          tesseract "${{ steps.find_image.outputs.image_path }}" hasil_ocr -l ara+eng
 
-      # Langkah 6: OCR dengan Tesseract
-      - name: Run OCR on Left Page
-        run: tesseract halaman_kiri.png hasil_ocr_kiri -l ara+eng
-
-      - name: Run OCR on Right Page
-        run: tesseract halaman_kanan.png hasil_ocr_kanan -l ara+eng
-
-      # Langkah 7: Validasi Output OCR
+      # Langkah 6: Validasi Output OCR
       - name: Validate OCR Output
         run: |
-          if [ ! -s hasil_ocr_kiri.txt ]; then
-            echo "❌ Hasil OCR halaman kiri kosong atau tidak ada!"
-            exit 1
-          fi
-          if [ ! -s hasil_ocr_kanan.txt ]; then
-            echo "❌ Hasil OCR halaman kanan kosong atau tidak ada!"
+          if [ ! -s hasil_ocr.txt ]; then
+            echo "❌ Hasil OCR kosong atau tidak ada!"
             exit 1
           fi
 
-      # Langkah 8: Debugging - Periksa isi file OCR
-      - name: Debug OCR Files
+      # Langkah 7: Debugging - Periksa isi file OCR
+      - name: Debug OCR File
         run: |
-          echo "📄 Isi hasil_ocr_kiri.txt:"
-          cat hasil_ocr_kiri.txt
-          echo ""
-          echo "📄 Isi hasil_ocr_kanan.txt:"
-          cat hasil_ocr_kanan.txt
+          echo "📄 Isi hasil_ocr.txt:"
+          cat hasil_ocr.txt
 
-      # Langkah 9: Setup Node.js dan instalasi google-translate-api
+      # Langkah 8: Setup Node.js dan instalasi google-translate-api
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
@@ -96,44 +81,32 @@ jobs:
         run: |
           npm install --save google-translate-api
 
-      # Langkah 10: Buat skrip terjemahan yang robust
+      # Langkah 9: Buat skrip terjemahan yang robust
       - name: Create Robust Translate Script
         run: |
           echo "const fs = require('fs'); const translate = require('google-translate-api'); const text = fs.readFileSync(process.argv[2], 'utf-8'); if (!text.trim()) { console.log('⚠️ Teks kosong, lewati terjemahan'); fs.writeFileSync(process.argv[4], '[Tidak ada teks untuk diterjemahkan]'); } else { translate(text, { to: process.argv[3] }).then(res => { console.log(res.text); fs.writeFileSync(process.argv[4], res.text); }).catch(err => { console.error('❌ Terjadi kesalahan:', err); fs.writeFileSync(process.argv[4], '[Terjemahan gagal]'); }); }" > translate.js
 
-      # Langkah 11: Terjemahkan halaman kiri dan kanan
-      - name: Translate Left Page Text
+      # Langkah 10: Terjemahkan hasil OCR
+      - name: Translate OCR Text
         run: |
-          node translate.js hasil_ocr_kiri.txt id hasil_terjemahan_kiri.txt
-          echo "✅ Terjemahan halaman kiri selesai."
+          node translate.js hasil_ocr.txt id hasil_terjemahan.txt
+          echo "✅ Terjemahan selesai."
 
-      - name: Translate Right Page Text
+      # Langkah 11: Validasi file terjemahan
+      - name: Validate Translation File
         run: |
-          node translate.js hasil_ocr_kanan.txt id hasil_terjemahan_kanan.txt
-          echo "✅ Terjemahan halaman kanan selesai."
-
-      # Langkah 12: Validasi file terjemahan
-      - name: Validate Translation Files
-        run: |
-          if [ ! -f hasil_terjemahan_kiri.txt ]; then
-            echo "❌ hasil_terjemahan_kiri.txt tidak ditemukan!"
-            exit 1
-          fi
-          if [ ! -f hasil_terjemahan_kanan.txt ]; then
-            echo "❌ hasil_terjemahan_kanan.txt tidak ditemukan!"
+          if [ ! -f hasil_terjemahan.txt ]; then
+            echo "❌ hasil_terjemahan.txt tidak ditemukan!"
             exit 1
           fi
 
-      # Langkah 13: Debugging - Periksa isi file terjemahan
-      - name: Debug Translation Files
+      # Langkah 12: Debugging - Periksa isi file terjemahan
+      - name: Debug Translation File
         run: |
-          echo "📄 Isi hasil_terjemahan_kiri.txt:"
-          cat hasil_terjemahan_kiri.txt
-          echo ""
-          echo "📄 Isi hasil_terjemahan_kanan.txt:"
-          cat hasil_terjemahan_kanan.txt
+          echo "📄 Isi hasil_terjemahan.txt:"
+          cat hasil_terjemahan.txt
 
-      # Langkah 14: Gabungkan hasil terjemahan ke file Markdown
+      # Langkah 13: Gabungkan hasil terjemahan ke file Markdown
       - name: Combine and Commit Results
         run: |
           ORIGINAL_FILENAME="${{ steps.find_image.outputs.image_path }}"
@@ -145,17 +118,12 @@ jobs:
             echo "# Hasil Terjemahan untuk: ${ORIGINAL_FILENAME}"
             echo ""
             echo "---"
-            echo "## Terjemahan Halaman Kiri"
+            echo "## Terjemahan"
             echo ""
-            cat hasil_terjemahan_kiri.txt
-            echo ""
-            echo "---"
-            echo "## Terjemahan Halaman Kanan"
-            echo ""
-            cat hasil_terjemahan_kanan.txt
+            cat hasil_terjemahan.txt
           } > "$OUTPUT_FILE"
 
-      # Langkah 15: Auto commit file hasil terjemahan
+      # Langkah 14: Auto commit file hasil terjemahan
       - name: Auto Commit Translated File
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
