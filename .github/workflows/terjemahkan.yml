@@ -24,27 +24,37 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y imagemagick tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
 
-      # Langkah 3: Cari file .png baru
-      - name: Find New Image File
+      # Langkah 3: Cari file .png di folder manuskrip/
+      - name: Find Image File
         id: find_image
         run: |
-          IMAGE_FILE=$(git diff-tree --no-commit-id --name-only -r ${{ github.sha }} | grep '\.png$')
+          IMAGE_FILE=$(find manuskrip -type f -name "*.png" | head -n 1)
+          if [ -z "$IMAGE_FILE" ]; then
+            echo "❌ Tidak ada file .png ditemukan di folder manuskrip/"
+            exit 1
+          fi
           echo "image_path=$IMAGE_FILE" >> $GITHUB_OUTPUT
 
-      # Langkah 4: Potong gambar menjadi halaman kiri dan kanan
+      # Langkah 4: Debugging (Opsional, untuk melihat file yang terdeteksi)
+      - name: Debug Git Diff
+        run: |
+          echo "🔍 Memeriksa file yang diubah di commit ini:"
+          git diff-tree --no-commit-id --name-only -r ${{ github.sha }}
+
+      # Langkah 5: Potong gambar menjadi halaman kiri dan kanan
       - name: Split Image into Left and Right Pages
         run: |
           convert "${{ steps.find_image.outputs.image_path }}" -crop 50x100%+0+0 halaman_kiri.png
           convert "${{ steps.find_image.outputs.image_path }}" -crop 50x100%+50%x0 +repage halaman_kanan.png
 
-      # Langkah 5: OCR dengan Tesseract
+      # Langkah 6: OCR dengan Tesseract
       - name: Run OCR on Left Page
         run: tesseract halaman_kiri.png hasil_ocr_kiri -l ara+eng
 
       - name: Run OCR on Right Page
         run: tesseract halaman_kanan.png hasil_ocr_kanan -l ara+eng
 
-      # Langkah 6: Setup Node.js dan instalasi google-translate-api
+      # Langkah 7: Setup Node.js dan instalasi google-translate-api
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
@@ -54,23 +64,23 @@ jobs:
         run: |
           npm install --save google-translate-api
 
-      # Langkah 7: Buat skrip terjemahan
+      # Langkah 8: Buat skrip terjemahan
       - name: Create Translate Script
         run: |
           echo "const fs = require('fs'); const translate = require('google-translate-api'); const text = fs.readFileSync(process.argv[2], 'utf-8'); translate(text, { to: process.argv[3] }).then(res => { console.log(res.text); fs.writeFileSync(process.argv[4], res.text); }).catch(err => { console.error('Terjadi kesalahan:', err); });" > translate.js
 
-      # Langkah 8: Terjemahkan teks halaman kiri dan kanan
+      # Langkah 9: Terjemahkan teks halaman kiri dan kanan
       - name: Translate Left Page Text
         run: |
           node translate.js hasil_ocr_kiri.txt id hasil_terjemahan_kiri.txt
-          echo "Terjemahan halaman kiri selesai."
+          echo "✅ Terjemahan halaman kiri selesai."
 
       - name: Translate Right Page Text
         run: |
           node translate.js hasil_ocr_kanan.txt id hasil_terjemahan_kanan.txt
-          echo "Terjemahan halaman kanan selesai."
+          echo "✅ Terjemahan halaman kanan selesai."
 
-      # Langkah 9: Gabungkan hasil terjemahan ke file Markdown
+      # Langkah 10: Gabungkan hasil terjemahan ke file Markdown
       - name: Combine and Commit Results
         run: |
           ORIGINAL_FILENAME="${{ steps.find_image.outputs.image_path }}"
@@ -92,7 +102,7 @@ jobs:
             cat hasil_terjemahan_kanan.txt
           } > "$OUTPUT_FILE"
 
-      # Langkah 10: Auto commit file hasil terjemahan
+      # Langkah 11: Auto commit file hasil terjemahan
       - name: Auto Commit Translated File
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
