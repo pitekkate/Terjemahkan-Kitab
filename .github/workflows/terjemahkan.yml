@@ -1,13 +1,21 @@
 # Nama Workflow
 name: Terjemahkan Gambar Manuskrip
 
-# Pemicu: Jalankan workflow ini saat ada file .png baru di folder 'manuskrip/'
+# Pemicu: Jalankan workflow ini saat:
+# 1. Ada file .png baru di folder 'manuskrip/'
+# 2. Di-trigger secara manual via GitHub UI/API
 on:
   push:
     branches:
       - alfatawi
     paths:
       - 'manuskrip/**.png'
+  workflow_dispatch:
+    inputs:
+      image_file:
+        type: string
+        description: 'Path file gambar (contoh: manuskrip/halaman1.png)'
+        default: 'manuskrip/*.png'
 
 jobs:
   ocr-and-translate:
@@ -24,15 +32,24 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y imagemagick tesseract-ocr tesseract-ocr-ara tesseract-ocr-eng
 
-      # Langkah 3: Cari file .png di folder manuskrip/
+      # Langkah 3: Cari file .png (otomatis atau manual)
       - name: Find Image File
         id: find_image
         run: |
-          IMAGE_FILE=$(find manuskrip -type f -name "*.png" | head -n 1)
+          # Jika input manual disediakan, gunakan itu
+          IMAGE_FILE="${{ github.event.inputs.image_file }}"
+          
+          # Jika tidak, cari file .png pertama di folder manuskrip/
+          if [ -z "$IMAGE_FILE" ]; then
+            IMAGE_FILE=$(find manuskrip -type f -name "*.png" | head -n 1)
+          fi
+
+          # Validasi file
           if [ -z "$IMAGE_FILE" ]; then
             echo "❌ Tidak ada file .png ditemukan di folder manuskrip/"
             exit 1
           fi
+
           echo "image_path=$IMAGE_FILE" >> $GITHUB_OUTPUT
 
       # Langkah 4: Debugging (Opsional, untuk melihat file yang terdeteksi)
